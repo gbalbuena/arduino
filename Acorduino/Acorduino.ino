@@ -1,75 +1,112 @@
-// #include "MIDIUSB.h"
+#include <math.h>
+
+#include "MIDIUSB.h"
 // Allows an Arduino board with USB capabilites to act as a MIDI instrument over USB.
 // Micro, Pro Micro or Leonardo are required
 
-#include "FREQUENCY.h"
+#include "FREQUENCY_NOTES.h"
 #include "MIDI_NOTES.h"
 
-const int BUTTONS_QTY = 14;
-const int BUZZER_PIN = 2;
-const byte BUTTONS_PINS[BUTTONS_QTY] = { 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 22, 24, 26 };
+struct Button {
+  int pin;
+  int midiNote;
+  
+  bool state;
+  bool previousState;
 
-byte buttonsState[BUTTONS_QTY] = { 0 };
-byte buttonsPreviousState[BUTTONS_QTY] = { 0 };
-
-unsigned long lastDebounceTime[BUTTONS_QTY] = { 0 };
-unsigned long buttonsTimer[BUTTONS_QTY] = { 0 };
-int buttonsTimeout = 10; // ms (10-30)
-
-// Diatonic
-int note1[BUTTONS_QTY] = {
-  C1, D2, E2, F2, G2, A2, B2,
-  C3, D3, E3, F3, G3, A3, B3
+  long timer;
+  long lastDebounceTime;
 };
 
-int note2[BUTTONS_QTY] = {
-  C4, D4, E4, F4, G4, A4, B4,
-  C5, D5, E5, F5, G5, A5, B5
+Button buttons[] = {
+  { 30, C1, false, false, 0, 0 },
+  { 31, D2, false, false, 0, 0 },
+  { 32, E2, false, false, 0, 0 },
+  { 33, F2, false, false, 0, 0 },
+  { 34, G2, false, false, 0, 0 },
+  { 35, A2, false, false, 0, 0 },
+  { 36, B2, false, false, 0, 0 }
 };
 
-int note3[BUTTONS_QTY] = {
-  C6, D6, E6, F6, G6, A6, B6,
-  C7, D7, E7, F7, G7, A7, B7
-};
-
-boolean isPlaying = false;
+const int BUTTONS_LENGTH = sizeof(buttons) / sizeof(buttons[0]);
+// const int BUZZER_PIN = 2;
 
 void setup() {
-  Serial.begin(9600);
+  // Serial.begin(9600);
+  MIDI.begin();
 
-  for (int i = 0; i < BUTTONS_QTY; i++) {
-    pinMode(BUTTONS_PINS[i], INPUT_PULLUP);
+  for (int i = 0; i < BUTTONS_LENGTH; i++) {
+    pinMode(buttons[i].pin, INPUT_PULLUP);
   }
 }
 
 void loop() {
-  _handleButtons();
+  handleButtons();
 }
 
-void _handleButtons() {
-  for (int i = 0; i < BUTTONS_QTY; i++) {
-    buttonsState[i] = digitalRead(BUTTONS_PINS[i]);
-    buttonsTimer[i] = milis() - lastDebounceTime[i];
+void handleButtons() {
+    for (int i = 0; i < numButtons; i++) {
+    buttons[i].state = digitalRead(buttons[i].pin);
+    buttons[i].timer = millis() - buttons[i].lastDebounceTime;
 
     if (buttonsTimer[i] > buttonsTimeout) {
-      lastDebounceTime[i] = milis();
+      lastDebounceTime[i] = millis();
 
-      if (buttonsState[i] == LOW) {
-        isPlaying = true;
-        tone(BUZZER_PIN, note1[i], 300);
-      } else {
-        isPlaying = false;
-        noTone(BUZZER_PIN);
-      }
+      if (buttons[i].state != buttons[i].previousState) {
 
-      if (buttonsState[i] != buttonsPreviousState[i]) {
-        buttonsPreviousState[i] = buttonsState[i];
+        // Button pressed, Send note-on message
+        if (buttons[i].state == LOW) {
+          // tone(BUZZER_PIN, midiToFreq(buttons[i].midiNote), 300);
+          noteOn(0, buttons[i].midiNote, 64);
+          MidiUSB.flush();
 
-        Serial.print("[");
-        Serial.print(i);
-        Serial.print("]");
-        Serial.println(buttonsState[i]);
+        // Button released, Send note-off message
+        } else {
+          // noTone(BUZZER_PIN);
+          noteOff(0, buttons[i].midiNote, 0);
+          MidiUSB.flush();
+          
+        }
+
+        buttons[i].previousState = buttons[i].state;
+        printInfo();
       }
     }
   }
+}
+
+int freqToMidi(float freq) {
+  float midiNumber = 12 * (log(freq / 440.0) / log(2)) + 69;
+  return round(midiNumber);
+}
+
+float midiToFreq(int midiNote) {
+  float freq = pow(2, (midiNote - 69) / 12.0) * 440.0;
+  return freq;
+}
+
+/**
+  First parameter is the event type (0x09 = note on, 0x08 = note off).
+  Second parameter is note-on/note-off, combined with the channel.
+  Channel can be anything between 0-15. Typically reported to the user as 1-16.
+  Third parameter is the note number (48 = middle C).
+  Fourth parameter is the velocity (64 = normal, 127 = fastest).
+ */
+void noteOn(byte channel, byte pitch, byte velocity) {
+  midiEventPacket_t noteOn = { 0x09, 0x90 | channel, pitch, velocity };
+  MidiUSB.sendMIDI(noteOn);
+}
+
+void noteOff(byte channel, byte pitch, byte velocity) {
+  midiEventPacket_t noteOff = { 0x08, 0x80 | channel, pitch, velocity };
+  MidiUSB.sendMIDI(noteOff);
+}
+
+void printInfo(int i) {
+  Serial.print("[");
+  Serial.print(i);
+  Serial.print("] freq=");
+  Serial.print(midiToFreq(buttons[i].midiNote));
+  Serial.print(", midi=");
+  Serial.println(buttons[i].midiNote);
 }
